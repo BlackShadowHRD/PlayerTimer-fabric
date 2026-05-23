@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "id": "playertimer",
+  "version": "${version}",
+  "name": "Player Timer",
+  "description": "A per-player count-up/countdown timer mod ported from the original Paper plugin.",
+  "authors": [
+    "Boti/doc"
+  ],
+  "license": "All-Rights-Reserved",
+  "environment": "*",
+  "entrypoints": {
+    "main": [
+      "boti.doc.playertimer.PlayerTimerMod"
+    ]
+  },
+  "depends": {
+    "fabricloader": ">=0.19.2",
+    "minecraft": "~26.1.2",
+    "java": ">=25",
+    "fabric-api": "*"
+  }
+}
