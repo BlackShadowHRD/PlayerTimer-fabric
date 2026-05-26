@@ -9,6 +9,7 @@ import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.sounds.SoundEvents;
 import net.minecraft.sounds.SoundSource;
 import net.minecraft.server.MinecraftServer;
+import net.minecraft.ChatFormatting;
 
 import java.util.UUID;
 import java.util.Map;
@@ -29,7 +30,7 @@ public class PlayerTimerService {
 
             if (timer.getState() != TimerState.RUNNING) {
                 if (timer.isVisible()) {
-                    sendActionBar(player, "Time: " + formatTime(timer.getTime()));
+                    sendActionBar(player, "Time: " + formatTime(timer.getTime()), timer.getColor());
                 }
                 continue;
             }
@@ -55,13 +56,13 @@ public class PlayerTimerService {
             }
 
             if (timer.isVisible()) {
-                sendActionBar(player, "Time: " + formatTime(timer.getTime()));
+                sendActionBar(player, "Time: " + formatTime(timer.getTime()), timer.getColor());
             }
         }
     }
 
-    public static void sendActionBar(ServerPlayer player, String message) {
-        player.sendSystemMessage(Component.literal(message), true);
+    public static void sendActionBar(ServerPlayer player, String message, ChatFormatting color) {
+        player.sendSystemMessage(Component.literal(message).withStyle(color), true);
     }
 
     public static String formatTime(int totalSeconds) {
@@ -85,10 +86,46 @@ public class PlayerTimerService {
         return null;
     }
 
-    public int executeStartCountdown(CommandContext<CommandSourceStack> ctx, String duration) {
+    public int setColour(CommandSourceStack source, String colourName) {
+        ServerPlayer player = getPlayerOrNotify(source);
+        if (player == null) {
+            return Command.SINGLE_SUCCESS;
+        }
+
+        PlayerTimer timer = timers.get(player.getUUID());
+
+        if (timer == null) {
+            player.sendSystemMessage(Component.literal("You do not have a timer."));
+            return Command.SINGLE_SUCCESS;
+        }
+
+        ChatFormatting colour = ChatFormatting.getByName(colourName.toLowerCase());
+
+        if (colour == null || !colour.isColor()) {
+            player.sendSystemMessage(Component.literal("Invalid colour."));
+            return Command.SINGLE_SUCCESS;
+        }
+
+        timer.setColor(colour);
+        player.sendSystemMessage(Component.literal("Timer colour changed to " + colourName + "."));
+
+        return Command.SINGLE_SUCCESS;
+    }
+
+    private ChatFormatting parseColor(String colorName) {
+        ChatFormatting color = ChatFormatting.getByName(colorName.toLowerCase());
+
+        if (color == null || !color.isColor()) {
+            return ChatFormatting.WHITE;
+        }
+
+        return color;
+    }
+
+    public int executeStartCountdown(CommandContext<CommandSourceStack> ctx, String duration, String colorName) {
         try {
             int seconds = TimeParser.parseToSeconds(duration);
-            return startCountdown(ctx.getSource(), seconds);
+            return startCountdown(ctx.getSource(), seconds, colorName);
         } catch (IllegalArgumentException e) {
             ctx.getSource().sendFailure(Component.literal(
                     "Invalid duration. Use seconds, mm:ss, hh:mm:ss, or formats like 1h0m10s."
@@ -97,7 +134,7 @@ public class PlayerTimerService {
         }
     }
 
-    public int startCountup(CommandSourceStack source) {
+    public int startCountup(CommandSourceStack source, String colorName) {
         ServerPlayer player = getPlayerOrNotify(source);
         if (player == null) {
             return Command.SINGLE_SUCCESS;
@@ -115,13 +152,14 @@ public class PlayerTimerService {
             timer.setTime(0);
             timer.setState(TimerState.RUNNING);
             timer.setVisible(true);
+            timer.setColor(parseColor(colorName));
             player.sendSystemMessage(Component.literal("Your timer has been started."));
         }
 
         return Command.SINGLE_SUCCESS;
     }
 
-    public int startCountdown(CommandSourceStack source, int seconds) {
+    public int startCountdown(CommandSourceStack source, int seconds, String colorName) {
         ServerPlayer player = getPlayerOrNotify(source);
         if (player == null) {
             return Command.SINGLE_SUCCESS;
@@ -139,6 +177,7 @@ public class PlayerTimerService {
             timer.setTime(seconds);
             timer.setState(TimerState.RUNNING);
             timer.setVisible(true);
+            timer.setColor(parseColor(colorName));
             player.sendSystemMessage(Component.literal("Your timer has been started."));
         }
 

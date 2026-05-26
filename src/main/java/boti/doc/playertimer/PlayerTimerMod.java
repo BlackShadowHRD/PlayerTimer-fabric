@@ -10,8 +10,8 @@ import net.minecraft.commands.Commands;
 
 /*
  * Commands:
- * /playertimer startcountup
- * /playertimer startcountdown [duration]
+ * /playertimer startcountup [color]
+ * /playertimer startcountdown [duration] [color]
  * /playertimer pause
  * /playertimer resume
  * /playertimer stop
@@ -35,17 +35,31 @@ public class PlayerTimerMod implements ModInitializer {
         CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) ->
                 dispatcher.register(Commands.literal("playertimer")
                         .then(Commands.literal("startcountup")
-                                .executes(ctx -> timerService.startCountup(ctx.getSource()))
+                                .executes(ctx -> timerService.startCountup(ctx.getSource(), "white"))
+                                .then(Commands.argument("color", StringArgumentType.word())
+                                        .executes(ctx -> {
+                                            String colorName = StringArgumentType.getString(ctx, "color");
+                                            return timerService.startCountup(ctx.getSource(), colorName);
+                                        })
+                                )
                         )
 
                         .then(Commands.literal("startcountdown")
-                                .executes(ctx -> timerService.startCountdown(ctx.getSource(), 300))
+                                .executes(ctx -> timerService.startCountdown(ctx.getSource(), 300, "white"))
 
-                                .then(Commands.argument("duration", StringArgumentType.greedyString())
+                                .then(Commands.argument("duration", StringArgumentType.word())
                                         .executes(ctx -> {
                                             String duration = StringArgumentType.getString(ctx, "duration");
-                                            return timerService.executeStartCountdown(ctx, duration);
+                                            return timerService.executeStartCountdown(ctx, duration, "white");
                                         })
+
+                                        .then(Commands.argument("color", StringArgumentType.word())
+                                                .executes(ctx -> {
+                                                    String duration = StringArgumentType.getString(ctx, "duration");
+                                                    String colorName = StringArgumentType.getString(ctx, "color");
+                                                    return timerService.executeStartCountdown(ctx, duration, colorName);
+                                                })
+                                        )
                                 )
                         )
 

@@ -40,9 +40,11 @@ Designed for:
 
 | Command | Description |
 |---|---|
-| `/playertimer startcountup` | Start a countup timer |
-| `/playertimer startcountdown` | Start a 5 minute countdown |
-| `/playertimer startcountdown <duration>` | Start a countdown with custom duration |
+| `/playertimer startcountup` | Start a white countup timer |
+| `/playertimer startcountup <color>` | Start a coloured countup timer |
+| `/playertimer startcountdown` | Start a 5 minute white countdown |
+| `/playertimer startcountdown <duration>` | Start a white countdown with custom duration |
+| `/playertimer startcountdown <duration> <color>` | Start a coloured countdown |
 | `/playertimer pause` | Pause the timer |
 | `/playertimer resume` | Resume a paused timer |
 | `/playertimer stop` | Stop the timer and hide it |
@@ -165,6 +167,42 @@ This limit exists because the timer internally uses Java `int` values.
 
 ---
 
+---
+
+# Timer Colours
+
+Timers may optionally be started with a colour argument.
+
+## Supported colours
+
+|Colour|
+|---|
+|black|
+|dark_blue|
+|dark_green|
+|dark_aqua|
+|dark_red|
+|dark_purple|
+|gold|
+|gray|
+|dark_gray|
+|blue|
+|green|
+|aqua|
+|red|
+|light_purple|
+|yellow|
+|white|
+
+Examples:
+
+```text
+/playertimer startcountup red
+/playertimer startcountdown 5m gold
+/playertimer startcountdown 01:30 dark_blue
+```
+---
+
 # Timer States
 
 Internally the mod tracks timer state using a finite state model.
@@ -276,6 +314,10 @@ Meaning:
 ---
 
 # Changelog
+
+## 26.1.x-1.1
+- Added coloured timer support
+- Added optional colour arguments to timer start commands
 
 ## 26.1.x-1.0
 

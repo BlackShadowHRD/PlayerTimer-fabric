@@ -1,11 +1,15 @@
 package boti.doc.playertimer;
 
+import net.minecraft.ChatFormatting;
+
 public class PlayerTimer {
 
     private TimerMode mode;
     private TimerState state;
     private boolean visible;
     private int time;
+    private ChatFormatting color;
+    private boolean alarm;
 
     public PlayerTimer(
             TimerMode mode,
@@ -17,6 +21,8 @@ public class PlayerTimer {
         this.state = state;
         this.visible = visible;
         this.time = time;
+        this.color = ChatFormatting.WHITE; // make white the default color
+	this.alarm = false;
     }
 
     public TimerMode getMode() {
@@ -50,4 +56,13 @@ public class PlayerTimer {
     public void setTime(int time) {
         this.time = time;
     }
+
+    public ChatFormatting getColor() {
+        return color;
+    }
+
+    public void setColor(ChatFormatting color) {
+        this.color = color;
+    }
+
 }
