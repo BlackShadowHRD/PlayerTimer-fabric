@@ -1,107 +1,74 @@
 package boti.doc.playertimer;
 
-import com.mojang.brigadier.arguments.StringArgumentType;
-
 import net.fabricmc.api.ModInitializer;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
+import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
+import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
+import net.fabricmc.loader.api.FabricLoader;
 
-import net.minecraft.commands.Commands;
-
-/*
- * Commands:
- * /playertimer startcountup [color]
- * /playertimer startcountdown [duration] [color]
- * /playertimer pause
- * /playertimer resume
- * /playertimer stop
- * /playertimer reset
- * /playertimer hide
- * /playertimer show
-*/
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public class PlayerTimerMod implements ModInitializer {
 
+    public static final Logger LOGGER = LoggerFactory.getLogger("playertimer");
+
+    private static final int AUTO_SAVE_INTERVAL_TICKS = 20 * 30; // every 30 seconds
     private int ticksUntilTimerUpdate = 20;
-    private final PlayerTimerService timerService = new PlayerTimerService();
+    private int ticksUntilAutoSave = AUTO_SAVE_INTERVAL_TICKS;
+
+    private PlayerTimerService timerService;
 
     @Override
     public void onInitialize() {
+        TimerStore store = new TimerStore(
+                FabricLoader.getInstance().getConfigDir().resolve("playertimer"),
+                LOGGER
+        );
+
+        timerService = new PlayerTimerService(store);
+
         registerCommands();
         registerTimerTick();
+        registerPlayerQuit();
+        registerShutdownSave();
     }
 
     private void registerCommands() {
         CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) ->
-                dispatcher.register(Commands.literal("playertimer")
-                        .then(Commands.literal("startcountup")
-                                .executes(ctx -> timerService.startCountup(ctx.getSource(), "white"))
-                                .then(Commands.argument("color", StringArgumentType.word())
-                                        .executes(ctx -> {
-                                            String colorName = StringArgumentType.getString(ctx, "color");
-                                            return timerService.startCountup(ctx.getSource(), colorName);
-                                        })
-                                )
-                        )
-
-                        .then(Commands.literal("startcountdown")
-                                .executes(ctx -> timerService.startCountdown(ctx.getSource(), 300, "white"))
-
-                                .then(Commands.argument("duration", StringArgumentType.word())
-                                        .executes(ctx -> {
-                                            String duration = StringArgumentType.getString(ctx, "duration");
-                                            return timerService.executeStartCountdown(ctx, duration, "white");
-                                        })
-
-                                        .then(Commands.argument("color", StringArgumentType.word())
-                                                .executes(ctx -> {
-                                                    String duration = StringArgumentType.getString(ctx, "duration");
-                                                    String colorName = StringArgumentType.getString(ctx, "color");
-                                                    return timerService.executeStartCountdown(ctx, duration, colorName);
-                                                })
-                                        )
-                                )
-                        )
-
-                        .then(Commands.literal("pause")
-                                .executes(ctx -> timerService.pauseTimer(ctx.getSource()))
-                        )
-
-                        .then(Commands.literal("resume")
-                                .executes(ctx -> timerService.resumeTimer(ctx.getSource()))
-                        )
-
-                        .then(Commands.literal("stop")
-                                .executes(ctx -> timerService.stopTimer(ctx.getSource()))
-                        )
-
-                        .then(Commands.literal("reset")
-                                .executes(ctx -> timerService.resetTimer(ctx.getSource()))
-                        )
-
-                        .then(Commands.literal("hide")
-                                .executes(ctx -> timerService.hideTimer(ctx.getSource()))
-                        )
-
-                        .then(Commands.literal("show")
-                                .executes(ctx -> timerService.showTimer(ctx.getSource()))
-                        )
-                )
+                new PlayerTimerCommand(timerService).register(dispatcher, registryAccess)
         );
     }
 
     private void registerTimerTick() {
         ServerTickEvents.END_SERVER_TICK.register(server -> {
-            ticksUntilTimerUpdate--;
 
-            if (ticksUntilTimerUpdate > 0) {
-                return;
+            // Timer tick — once per second
+            ticksUntilTimerUpdate--;
+            if (ticksUntilTimerUpdate <= 0) {
+                ticksUntilTimerUpdate = 20;
+                timerService.tickAllPlayers(server);
             }
 
-            ticksUntilTimerUpdate = 20;
-
-            timerService.tickAllPlayers(server);
+            // Auto-save — every 30 seconds
+            ticksUntilAutoSave--;
+            if (ticksUntilAutoSave <= 0) {
+                ticksUntilAutoSave = AUTO_SAVE_INTERVAL_TICKS;
+                timerService.saveAll();
+            }
         });
     }
 
+    private void registerPlayerQuit() {
+        ServerPlayConnectionEvents.DISCONNECT.register((handler, server) ->
+                timerService.onPlayerQuit(handler.player)
+        );
+    }
+
+    private void registerShutdownSave() {
+        ServerLifecycleEvents.SERVER_STOPPING.register(server ->
+                timerService.saveAll()
+        );
+    }
 }

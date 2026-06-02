@@ -3,306 +3,309 @@ package boti.doc.playertimer;
 import com.mojang.brigadier.Command;
 import com.mojang.brigadier.context.CommandContext;
 
+import net.minecraft.ChatFormatting;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.network.chat.Component;
+import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.sounds.SoundEvents;
 import net.minecraft.sounds.SoundSource;
-import net.minecraft.server.MinecraftServer;
-import net.minecraft.ChatFormatting;
 
-import java.util.UUID;
 import java.util.Map;
-import java.util.HashMap;
+import java.util.UUID;
 
 public class PlayerTimerService {
 
-    private final Map<UUID, PlayerTimer> timers = new HashMap<>();
+    private final Map<UUID, PlayerTimer> timers;
+    private final TimerStore store;
 
-    public void tickAllPlayers(MinecraftServer server) {
-        for (ServerPlayer player : server.getPlayerList().getPlayers()) {
-            UUID id = player.getUUID();
-            PlayerTimer timer = timers.get(id);
-
-            if (timer == null) {
-                continue;
-            }
-
-            if (timer.getState() != TimerState.RUNNING) {
-                if (timer.isVisible()) {
-                    sendActionBar(player, "Time: " + formatTime(timer.getTime()), timer.getColor());
-                }
-                continue;
-            }
-
-            if (timer.getMode() == TimerMode.COUNTDOWN) {
-                timer.setTime(timer.getTime() - 1);
-
-                if (timer.getTime() <= 0) {
-                    timer.setTime(0);
-                    timer.setState(TimerState.FINISHED);
-                    player.sendSystemMessage(Component.literal("Your time is up."));
-                    player.level().playSound(
-                            null,
-                            player.blockPosition(),
-                            SoundEvents.BELL_BLOCK,
-                            SoundSource.BLOCKS,
-                            1.0f,
-                            0.7f
-                    );
-                }
-            } else {
-                timer.setTime(timer.getTime() + 1);
-            }
-
-            if (timer.isVisible()) {
-                sendActionBar(player, "Time: " + formatTime(timer.getTime()), timer.getColor());
-            }
-        }
+    public PlayerTimerService(TimerStore store) {
+        this.store = store;
+        this.timers = store.load();
     }
 
-    public static void sendActionBar(ServerPlayer player, String message, ChatFormatting color) {
-        player.sendSystemMessage(Component.literal(message).withStyle(color), true);
-    }
-
-    public static String formatTime(int totalSeconds) {
-        int hours = totalSeconds / 3600;
-        int minutes = (totalSeconds % 3600) / 60;
-        int seconds = totalSeconds % 60;
-
-        if (hours > 0) {
-            return String.format("%02d:%02d:%02d", hours, minutes, seconds);
-        }
-
-        return String.format("%02d:%02d", minutes, seconds);
-    }
-
-    public static ServerPlayer getPlayerOrNotify(CommandSourceStack source) {
-        if (source.getEntity() instanceof ServerPlayer player) {
-            return player;
-        }
-
-        source.sendFailure(Component.literal("Only players can use this command."));
-        return null;
-    }
-
-    public int setColour(CommandSourceStack source, String colourName) {
-        ServerPlayer player = getPlayerOrNotify(source);
-        if (player == null) {
-            return Command.SINGLE_SUCCESS;
-        }
-
-        PlayerTimer timer = timers.get(player.getUUID());
-
-        if (timer == null) {
-            player.sendSystemMessage(Component.literal("You do not have a timer."));
-            return Command.SINGLE_SUCCESS;
-        }
-
-        ChatFormatting colour = ChatFormatting.getByName(colourName.toLowerCase());
-
-        if (colour == null || !colour.isColor()) {
-            player.sendSystemMessage(Component.literal("Invalid colour."));
-            return Command.SINGLE_SUCCESS;
-        }
-
-        timer.setColor(colour);
-        player.sendSystemMessage(Component.literal("Timer colour changed to " + colourName + "."));
-
-        return Command.SINGLE_SUCCESS;
-    }
-
-    private ChatFormatting parseColor(String colorName) {
-        ChatFormatting color = ChatFormatting.getByName(colorName.toLowerCase());
-
-        if (color == null || !color.isColor()) {
-            return ChatFormatting.WHITE;
-        }
-
-        return color;
-    }
-
-    public int executeStartCountdown(CommandContext<CommandSourceStack> ctx, String duration, String colorName) {
-        try {
-            int seconds = TimeParser.parseToSeconds(duration);
-            return startCountdown(ctx.getSource(), seconds, colorName);
-        } catch (IllegalArgumentException e) {
-            ctx.getSource().sendFailure(Component.literal(
-                    "Invalid duration. Use seconds, mm:ss, hh:mm:ss, or formats like 1h0m10s."
-            ));
-            return Command.SINGLE_SUCCESS;
-        }
-    }
+    // --- Player commands ---
 
     public int startCountup(CommandSourceStack source, String colorName) {
-        ServerPlayer player = getPlayerOrNotify(source);
-        if (player == null) {
+        TimerCommandContext ctx = requirePlayer(source);
+        if (ctx == null) return Command.SINGLE_SUCCESS;
+
+        UUID id = ctx.player().getUUID();
+        PlayerTimer timer = timers.get(id);
+
+        if (timer != null && timer.getState() == TimerState.RUNNING) {
+            ctx.reply("Timer is already running.");
             return Command.SINGLE_SUCCESS;
         }
 
-        UUID id = player.getUUID();
-
-        timers.putIfAbsent(id, new PlayerTimer(TimerMode.COUNTUP, TimerState.READY, false, 0));
-        PlayerTimer timer = timers.get(id);
-
-        if (timer.getState() == TimerState.RUNNING) {
-            player.sendSystemMessage(Component.literal("Your timer is already running."));
-        } else {
-            timer.setMode(TimerMode.COUNTUP);
-            timer.setTime(0);
-            timer.setState(TimerState.RUNNING);
-            timer.setVisible(true);
-            timer.setColor(parseColor(colorName));
-            player.sendSystemMessage(Component.literal("Your timer has been started."));
-        }
+        PlayerTimer newTimer = new PlayerTimer(TimerMode.COUNTUP, 0);
+        newTimer.setColor(parseColor(colorName));
+        newTimer.start();
+        timers.put(id, newTimer);
+        saveAll();
+        ctx.reply("Timer started.");
 
         return Command.SINGLE_SUCCESS;
     }
 
     public int startCountdown(CommandSourceStack source, int seconds, String colorName) {
-        ServerPlayer player = getPlayerOrNotify(source);
-        if (player == null) {
+        TimerCommandContext ctx = requirePlayer(source);
+        if (ctx == null) return Command.SINGLE_SUCCESS;
+
+        UUID id = ctx.player().getUUID();
+        PlayerTimer timer = timers.get(id);
+
+        if (timer != null && timer.getState() == TimerState.RUNNING) {
+            ctx.reply("Timer is already running.");
             return Command.SINGLE_SUCCESS;
         }
 
-        UUID id = player.getUUID();
-
-        timers.putIfAbsent(id, new PlayerTimer(TimerMode.COUNTDOWN, TimerState.READY, true, seconds));
-        PlayerTimer timer = timers.get(id);
-
-        if (timer.getState() == TimerState.RUNNING) {
-            player.sendSystemMessage(Component.literal("Your timer is already running."));
-        } else {
-            timer.setMode(TimerMode.COUNTDOWN);
-            timer.setTime(seconds);
-            timer.setState(TimerState.RUNNING);
-            timer.setVisible(true);
-            timer.setColor(parseColor(colorName));
-            player.sendSystemMessage(Component.literal("Your timer has been started."));
-        }
+        PlayerTimer newTimer = new PlayerTimer(TimerMode.COUNTDOWN, seconds);
+        newTimer.setColor(parseColor(colorName));
+        newTimer.start();
+        timers.put(id, newTimer);
+        saveAll();
+        ctx.reply("Timer started.");
 
         return Command.SINGLE_SUCCESS;
     }
 
     public int pauseTimer(CommandSourceStack source) {
-        ServerPlayer player = getPlayerOrNotify(source);
-        if (player == null) {
+        TimerCommandContext ctx = requirePlayer(source);
+        if (ctx == null) return Command.SINGLE_SUCCESS;
+
+        PlayerTimer timer = timers.get(ctx.player().getUUID());
+        if (timer == null) {
+            ctx.reply("You do not have a timer.");
             return Command.SINGLE_SUCCESS;
         }
 
-        PlayerTimer timer = timers.get(player.getUUID());
-
-        if (timer == null) {
-            player.sendSystemMessage(Component.literal("You do not have a timer."));
-        } else if (timer.getState() == TimerState.RUNNING) {
-            timer.setState(TimerState.PAUSED);
-            player.sendSystemMessage(Component.literal("Your timer has been paused."));
-        } else {
-            player.sendSystemMessage(Component.literal("Your timer is not running."));
+        switch (timer.pause()) {
+            case SUCCESS -> {
+                saveAll();
+                ctx.reply("Timer paused.");
+            }
+            case NOT_RUNNING -> ctx.reply("That timer is not running so cannot be paused.");
+            case NOT_PAUSED, NOT_ACTIVE -> ctx.reply("Unable to pause timer.");
         }
 
         return Command.SINGLE_SUCCESS;
     }
 
     public int resumeTimer(CommandSourceStack source) {
-        ServerPlayer player = getPlayerOrNotify(source);
-        if (player == null) {
+        TimerCommandContext ctx = requirePlayer(source);
+        if (ctx == null) return Command.SINGLE_SUCCESS;
+
+        PlayerTimer timer = timers.get(ctx.player().getUUID());
+        if (timer == null) {
+            ctx.reply("You do not have a timer.");
             return Command.SINGLE_SUCCESS;
         }
 
-        PlayerTimer timer = timers.get(player.getUUID());
-
-        if (timer == null) {
-            player.sendSystemMessage(Component.literal("You do not have a timer."));
-        } else if (timer.getState() != TimerState.PAUSED) {
-            player.sendSystemMessage(Component.literal("You do not have a paused timer."));
-        } else {
-            timer.setState(TimerState.RUNNING);
-            timer.setVisible(true);
-            player.sendSystemMessage(Component.literal("Your timer has been resumed."));
+        switch (timer.resume()) {
+            case SUCCESS -> {
+                saveAll();
+                ctx.reply("Timer resumed.");
+            }
+            case NOT_PAUSED -> ctx.reply("That timer is not paused so cannot be resumed.");
+            case NOT_RUNNING, NOT_ACTIVE -> ctx.reply("Unable to resume timer.");
         }
 
         return Command.SINGLE_SUCCESS;
     }
 
     public int stopTimer(CommandSourceStack source) {
-        ServerPlayer player = getPlayerOrNotify(source);
-        if (player == null) {
+        TimerCommandContext ctx = requirePlayer(source);
+        if (ctx == null) return Command.SINGLE_SUCCESS;
+
+        PlayerTimer timer = timers.get(ctx.player().getUUID());
+        if (timer == null) {
+            ctx.reply("You do not have a timer.");
             return Command.SINGLE_SUCCESS;
         }
 
-        PlayerTimer timer = timers.get(player.getUUID());
-
-        if (timer == null) {
-            player.sendSystemMessage(Component.literal("You do not have a timer."));
-        } else if (timer.getState() == TimerState.RUNNING || timer.getState() == TimerState.PAUSED) {
-            timer.setState(TimerState.STOPPED);
-            timer.setTime(0);
-            timer.setVisible(false);
-            player.sendSystemMessage(Component.literal("Your timer has been stopped."));
-        } else {
-            player.sendSystemMessage(Component.literal("Your timer was not running."));
+        switch (timer.stop()) {
+            case SUCCESS -> {
+                saveAll();
+                ctx.reply("Timer stopped.");
+            }
+            case NOT_ACTIVE -> ctx.reply("That timer is neither running nor paused so cannot be stopped.");
+            case NOT_RUNNING, NOT_PAUSED -> ctx.reply("Unable to stop timer.");
         }
 
         return Command.SINGLE_SUCCESS;
     }
 
     public int resetTimer(CommandSourceStack source) {
-        ServerPlayer player = getPlayerOrNotify(source);
-        if (player == null) {
+        TimerCommandContext ctx = requirePlayer(source);
+        if (ctx == null) return Command.SINGLE_SUCCESS;
+
+        PlayerTimer timer = timers.get(ctx.player().getUUID());
+        if (timer == null) {
+            ctx.reply("You do not have a timer.");
             return Command.SINGLE_SUCCESS;
         }
 
-        PlayerTimer timer = timers.get(player.getUUID());
-
-        if (timer == null) {
-            player.sendSystemMessage(Component.literal("You do not have a timer."));
-        } else {
-            timer.setState(TimerState.READY);
-            timer.setTime(0);
-            timer.setVisible(true);
-            player.sendSystemMessage(Component.literal("Your timer has been reset."));
+        switch (timer.reset()) {
+            case SUCCESS -> {
+                saveAll();
+                ctx.reply("Timer reset.");
+            }
+            case NOT_RUNNING, NOT_PAUSED, NOT_ACTIVE -> ctx.reply("Unable to reset timer.");
         }
 
         return Command.SINGLE_SUCCESS;
     }
 
     public int hideTimer(CommandSourceStack source) {
-        ServerPlayer player = getPlayerOrNotify(source);
-        if (player == null) {
-            return Command.SINGLE_SUCCESS;
-        }
+        TimerCommandContext ctx = requirePlayer(source);
+        if (ctx == null) return Command.SINGLE_SUCCESS;
 
-        PlayerTimer timer = timers.get(player.getUUID());
-
+        PlayerTimer timer = timers.get(ctx.player().getUUID());
         if (timer == null) {
-            player.sendSystemMessage(Component.literal("You do not have a timer."));
+            ctx.reply("You do not have a timer.");
             return Command.SINGLE_SUCCESS;
         }
 
         timer.setVisible(false);
-        player.sendSystemMessage(Component.literal("Your timer is now hidden."));
+        saveAll();
+        ctx.reply("Timer hidden.");
 
         return Command.SINGLE_SUCCESS;
     }
 
     public int showTimer(CommandSourceStack source) {
-        ServerPlayer player = getPlayerOrNotify(source);
-        if (player == null) {
-            return Command.SINGLE_SUCCESS;
-        }
+        TimerCommandContext ctx = requirePlayer(source);
+        if (ctx == null) return Command.SINGLE_SUCCESS;
 
-        PlayerTimer timer = timers.get(player.getUUID());
-
+        PlayerTimer timer = timers.get(ctx.player().getUUID());
         if (timer == null) {
-            player.sendSystemMessage(Component.literal("You do not have a timer."));
+            ctx.reply("You do not have a timer.");
             return Command.SINGLE_SUCCESS;
         }
 
         timer.setVisible(true);
-        player.sendSystemMessage(Component.literal("Your timer is now visible."));
+        saveAll();
+        ctx.reply("Timer visible.");
 
         return Command.SINGLE_SUCCESS;
     }
 
+    public int executeStartCountdown(
+            CommandContext<CommandSourceStack> ctx,
+            String duration, String colorName
+    ) {
+        TimerCommandContext timerCtx = requirePlayer(ctx.getSource());
+        if (timerCtx == null) return Command.SINGLE_SUCCESS;
+
+        try {
+            int seconds = TimeParser.parseToSeconds(duration);
+            return startCountdown(ctx.getSource(), seconds, colorName);
+        } catch (IllegalArgumentException ignored) {
+            timerCtx.reply("Invalid duration. Use seconds, mm:ss, hh:mm:ss, or formats like 1h0m10s.");
+            return Command.SINGLE_SUCCESS;
+        }
+    }
+
+    // --- Admin commands ---
+
+    public int clearAllTimers(CommandSourceStack source) {
+        timers.clear();
+        saveAll();
+        source.sendSystemMessage(Component.literal("All player timers have been cleared."));
+        return Command.SINGLE_SUCCESS;
+    }
+
+    public int clearPlayerTimer(CommandSourceStack source, String playerName) {
+        // Search online players by name
+        ServerPlayer target = null;
+        for (ServerPlayer p : source.getServer().getPlayerList().getPlayers()) {
+            if (p.getName().getString().equalsIgnoreCase(playerName)) {
+                target = p;
+                break;
+            }
+        }
+
+        if (target == null) {
+            source.sendSystemMessage(Component.literal("Player not found or not online."));
+            return Command.SINGLE_SUCCESS;
+        }
+
+        timers.remove(target.getUUID());
+        saveAll();
+        source.sendSystemMessage(Component.literal("Timer cleared for " + target.getName().getString() + "."));
+        return Command.SINGLE_SUCCESS;
+    }
+
+    // --- Tick loop ---
+
+    public void tickAllPlayers(MinecraftServer server) {
+        for (ServerPlayer player : server.getPlayerList().getPlayers()) {
+            PlayerTimer timer = timers.get(player.getUUID());
+            if (timer == null) continue;
+
+            boolean justFinished = timer.tick();
+            if (justFinished) {
+                saveAll();
+                notifyFinished(player);
+            }
+            if (timer.isVisible()) renderTimer(player, timer);
+        }
+    }
+
+    private void notifyFinished(ServerPlayer player) {
+        player.sendSystemMessage(Component.literal("Your time is up."));
+        player.level().playSound(
+                null,
+                player.blockPosition(),
+                SoundEvents.BELL_BLOCK,
+                SoundSource.BLOCKS,
+                1.0f,
+                0.7f
+        );
+    }
+
+    private void renderTimer(ServerPlayer player, PlayerTimer timer) {
+        player.sendSystemMessage(
+                Component.literal("Time: " + timer.toDisplayString()).withStyle(timer.getColor()),
+                true  // true = action bar
+        );
+    }
+
+    // --- Persistence ---
+
+    public void saveAll() {
+        store.save(timers);
+    }
+
+    public void onPlayerQuit(ServerPlayer player) {
+        saveAll();
+    }
+
+    // --- Helpers ---
+
+    private record TimerCommandContext(ServerPlayer player, CommandSourceStack source) {
+        void reply(String message) {
+            if (source.getEntity() instanceof ServerPlayer) {
+                // Player ran it themselves — speak directly to them
+                source.sendSystemMessage(Component.literal(message));
+            } else {
+                // External trigger — include player name for context
+                source.sendSystemMessage(Component.literal("Player " + player.getName().getString() + ": " + message));
+            }
+        }
+    }
+
+    private TimerCommandContext requirePlayer(CommandSourceStack source) {
+        if (source.getEntity() instanceof ServerPlayer player) {
+            return new TimerCommandContext(player, source);
+        }
+        source.sendFailure(Component.literal("Only players can use this command."));
+        return null;
+    }
+
+    private ChatFormatting parseColor(String colorName) {
+        ChatFormatting color = ChatFormatting.getByName(colorName.toLowerCase());
+        return (color != null && color.isColor()) ? color : ChatFormatting.WHITE;
+    }
 }

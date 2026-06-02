@@ -31,6 +31,8 @@ Designed for:
 - Sound effects on completion
 - Multiple duration input formats
 - Command block compatible using `/execute as`
+- Admin commands for timer management
+- Persistent timers across restarts and crashes
 - Built for Fabric
 - Java 25 support
 
@@ -51,6 +53,8 @@ Designed for:
 | `/playertimer reset` | Reset timer to `00:00` |
 | `/playertimer hide` | Hide the timer display |
 | `/playertimer show` | Show the timer display |
+| `/playertimer admin clear <player>` | Clear the timer for player `<player>` (op level 2+) |
+| `/playertimer admin clearall` | Clear the timer for all players (op level 2+) |
 
 ---
 
@@ -167,32 +171,30 @@ This limit exists because the timer internally uses Java `int` values.
 
 ---
 
----
-
 # Timer Colours
 
 Timers may optionally be started with a colour argument.
 
 ## Supported colours
 
-|Colour|
+| Colour |
 |---|
-|black|
-|dark_blue|
-|dark_green|
-|dark_aqua|
-|dark_red|
-|dark_purple|
-|gold|
-|gray|
-|dark_gray|
-|blue|
-|green|
-|aqua|
-|red|
-|light_purple|
-|yellow|
-|white|
+| black |
+| dark_blue |
+| dark_green |
+| dark_aqua |
+| dark_red |
+| dark_purple |
+| gold |
+| gray |
+| dark_gray |
+| blue |
+| green |
+| aqua |
+| red |
+| light_purple |
+| yellow |
+| white |
 
 Examples:
 
@@ -201,6 +203,7 @@ Examples:
 /playertimer startcountdown 5m gold
 /playertimer startcountdown 01:30 dark_blue
 ```
+
 ---
 
 # Timer States
@@ -268,6 +271,30 @@ This allows:
 
 ---
 
+# Persistence
+
+All timers are saved to disk and restored on server restart or crash recovery. Timer data is stored in:
+
+```text
+config/playertimer/timers.json
+```
+
+Saves occur:
+- on every timer state change (start, pause, resume, stop, reset, hide, show, finish)
+- every 30 seconds automatically
+- when a player disconnects
+- when the server stops
+
+When a timer is restored after a restart, its state is set to `PAUSED` regardless of whether it was running before — the server was not ticking so the timer was not advancing. If the timer was started by the player directly, they are responsible for resuming it. If the timer was started by a minigame or adventure map, the game is responsible for resuming it.
+
+## Failure Behaviour
+
+**On load:** if a timer entry has a corrupt UUID it is skipped and a warning is logged. If the file cannot be read at all, a `RuntimeException` is thrown which prevents the mod from initialising.
+
+**On save:** if the file cannot be written, an error is logged and a `RuntimeException` is thrown. Because the timer is considered critical infrastructure (e.g. for minigames), this will cause the server to crash rather than continue with unsaved state.
+
+---
+
 # Building
 
 ## Requirements
@@ -308,12 +335,37 @@ Example:
 ```
 
 Meaning:
-- Compatible with Minecraft 26.1.x / API 26.1.x
+- Compatible with Minecraft 26.1.x
 - Mod release version 1.0
 
 ---
 
+# Planned Changes
+
+- A config file will be used allowing the server admin to pre-set some defaults. These will include:
+  - timer colour
+  - default value for countdown timer
+  - audible alarm on/off at end of countdown timer
+  - pre countdown finish beep per second on/off
+  - duration of pre countdown finish beeps
+  - failure behaviour on save (critical → server crash, non-critical → log and continue)
+- API — an interface to allow developers of games and adventure maps to access timer functions directly from their code
+
+---
+
 # Changelog
+
+## 26.1.x-1.2
+- Timers are now persistent across server restarts and crashes
+- Added admin commands (clear, clearall) gated behind op level 2
+- Moved timer logic into `PlayerTimer` domain model
+- Replaced anemic setters with domain operations (start, pause, resume, stop, reset)
+- Introduced `TimerOperationResult` enum replacing exception-based control flow
+- Extracted `PlayerTimerCommand` class from `PlayerTimerMod`
+- Added `TimerStore` for JSON persistence via Gson
+- Added periodic auto-save and save-on-state-change
+- Consistent command source messaging via `TimerCommandContext`
+- Player disconnect now removes timer from memory and triggers a save
 
 ## 26.1.x-1.1
 - Added coloured timer support
@@ -340,4 +392,3 @@ Meaning:
 # License
 
 MIT License
-# PlayerTimer-fabric
